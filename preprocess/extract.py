@@ -1,26 +1,40 @@
 import re
-
+from bs4 import BeautifulSoup
+import os
 
 def extract_dialogue_from_php(file_path, output_dir='./'):
     with open(file_path, 'r', encoding='utf-8') as f:
-        content = f.read()
+        raw_content = f.read()
 
-    # 방송일시 추출: '방송일시 : 2025. 5. 2.'
-    date_match = re.search(r'방송일시\s*:\s*(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})', content)
+    # BeautifulSoup으로 HTML 파싱
+    soup = BeautifulSoup(raw_content, "html.parser")
 
-    if not date_match:
-        print("방송일시를 찾을 수 없습니다.")
+    # 방송 제목 추출
+    title_div = soup.find("div", class_="movie_Tit")
+    if not title_div:
+        print("방송 제목을 찾을 수 없습니다.")
         return
 
-    year, month, day = date_match.groups()
-    formatted_date = f"{int(year):04d}.{int(month):02d}.{int(day):02d}"
-    output_txt_path = f"{output_dir}{formatted_date}.txt"
+    broadcast_title = title_div.get_text(strip=True)
 
-    # <br>를 개행으로 변환
-    content = content.replace('<br>', '\n')
+    # 파일명으로 사용하기 위해 특수문자 제거 및 공백 -> _
+    safe_title = re.sub(r'[\\/:*?"<>|]', '', broadcast_title)
+    safe_title = safe_title.replace(' ', '_')
+    output_txt_path = os.path.join(output_dir, f"{safe_title}.txt")
 
-    # -(사회자) ~ 여러분, 고맙습니다. 구간 추출
-    dialogue_block_match = re.search(r'(-\(사회자\).*?여러분, 고맙습니다\.[^\n]*\n?)', content, re.DOTALL)
+    # <br> 태그를 개행 문자로 변환
+    for br in soup.find_all("br"):
+        br.replace_with("\n")
+
+    # 전체 텍스트 추출
+    content = soup.get_text()
+
+    # 대화 블록 추출
+    dialogue_block_match = re.search(
+        r'(-\(사회자\).*?여러분, 고맙습니다\.[^\n]*\n?)',
+        content,
+        re.DOTALL
+    )
 
     if not dialogue_block_match:
         print("대화 블록을 찾을 수 없습니다.")
@@ -32,15 +46,18 @@ def extract_dialogue_from_php(file_path, output_dir='./'):
     pattern = r'-\((.*?)\)\s*(.*?)(?=\n-\(|\Z)'
     matches = re.findall(pattern, dialogue_block, re.DOTALL)
 
+    saved_count = 0  # 저장된 발화 수 카운트
+
     with open(output_txt_path, 'w', encoding='utf-8') as f:
         for speaker, text in matches:
             cleaned_text = text.strip()
-            if cleaned_text:
+            if len(cleaned_text) > 26:
                 f.write(f"({speaker.strip()}) {cleaned_text}\n")
+                saved_count += 1
 
-    print(f"[{len(matches)}개의 발화를 .txt 파일로 저장했습니다: {output_txt_path}")
-
+    print(f"[{saved_count}개의 발화를 .txt 파일로 저장했습니다: {output_txt_path}]")
 
 if __name__ == "__main__":
     extract_dialogue_from_php('../data/broadcast03_2020.php')
+
 
