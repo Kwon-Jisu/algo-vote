@@ -1,6 +1,9 @@
 from dotenv import load_dotenv
 import os
 import time
+import re
+
+from langchain.schema import Document
 
 from supabase import create_client, Client
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -38,20 +41,56 @@ google_api_key = os.getenv("GOOGLE_API_KEY")
 embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-exp-03-07", google_api_key=google_api_key)
 
 # 파일 경로 및 이름 설정
-file_path = "../preprocess/2025.05.02.txt"
-file_name = os.path.basename(file_path)
+file_path = "../preprocess/제21대_대통령선거_정책토론회.txt"
+file_name = os.path.splitext(os.path.basename(file_path))[0]
+source_link = "https://debates.go.kr/2016_broadcast/broadcast03_2020.php?year=&debate=&search_key=&ctg=2&sub_ctg=&sub_category=&type=&sido=&gu=&id=1846&offset=0"
 
 # 문서 불러오기 (.txt 파일)
 loader = TextLoader(file_path, encoding="utf-8")
 documents = loader.load()
 
-# Splitter 정의 및 실행
-text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=20)
 
-docs = text_splitter.split_documents(documents)
+def split_by_speaker(doc: Document) -> list[Document]:
+    text = doc.page_content
 
+    # 화자 기준으로 split
+    chunks = re.split(r'(?=\([^)]+\))', text)
+
+    results = []
+    for chunk in chunks:
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+
+        # 맨 앞 괄호 안의 화자 이름 추출
+        match = re.match(r'\(([^)]+)\)', chunk)
+        candidate = match.group(1) if match else "알 수 없음"
+
+        # metadata 생성
+        metadata = {
+            "source_name": file_name,
+            "candidate": candidate,
+            "source_link": source_link,
+            "page": None,
+            "total_pages": None
+        }
+
+        results.append(Document(page_content=chunk, metadata=metadata))
+
+    return results
+
+# 기존 documents 리스트에 대해 커스텀 splitter 적용
+split_docs = []
+for doc in documents:
+    split_docs.extend(split_by_speaker(doc))
+
+# # Splitter 정의 및 실행
+# text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=20)
+#
+# docs = text_splitter.split_documents(documents)
+#
 i = 0
-for doc in docs:
+for doc in split_docs:
     success = False
     while not success:
         try:
@@ -61,7 +100,7 @@ for doc in docs:
                 client=supabase,
                 table_name="debate_information"
             )
-            print(f"{len(docs)}개 중 {i+1}개 완료, ✅대기중...")
+            print(f"{len(split_docs)}개 중 {i+1}개 완료, ✅대기중...")
             time.sleep(3)
             success = True  # 성공 시 루프 탈출
         except GoogleGenerativeAIError as e:
